@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# Non-root access to Tensor G5 (laguna) EdgeTPU and system DMA-BUF heap
+KERNEL=="edgetpu-soc", SUBSYSTEM=="misc", MODE="0660", GROUP="video", TAG+="uaccess"
+KERNEL=="system", SUBSYSTEM=="dma_heap", MODE="0660", GROUP="video", TAG+="uaccess"

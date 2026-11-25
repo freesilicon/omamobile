@@ -1,0 +1,52 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Offline contract tests for omamobile-freetpu.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+
+bash -n PKGBUILD || fail "PKGBUILD parses"
+pass "PKGBUILD parses"
+
+# Verify exact Track P5-A contract alignment
+grep -qx '_freetpu_branch=feat/freetile-buenos-wire' PKGBUILD \
+  || fail "PKGBUILD pins feat/freetile-buenos-wire"
+grep -qx '_freetpu_commit=66e73ef6c54f8a23c0d987844f16d5c5787da201' PKGBUILD \
+  || fail "PKGBUILD pins commit 66e73ef6c54f8a23c0d987844f16d5c5787da201"
+grep -qx 'pkgrel=2' PKGBUILD || fail "pkgrel matches Track P5-A contract (2)"
+grep -qx 'provides=(libopenbuenos freetpu freetile)' PKGBUILD \
+  || fail "provides libopenbuenos, freetpu, freetile"
+grep -qx 'options=(staticlibs)' PKGBUILD \
+  || fail "options=(staticlibs) required so makepkg preserves libopenbuenos.a"
+pass "PKGBUILD aligns with Track P5-A branch, SHA, pkgrel, provides, and staticlibs"
+
+# Verify CMake flags and test/install contract
+for flag in \
+  '-DCMAKE_POSITION_INDEPENDENT_CODE=ON' \
+  '-DOPENBUENOS_ENABLE_FREETILE=ON' \
+  '-DOPENBUENOS_FREETILE_DEFAULT_ON=OFF' \
+  '-DOPENBUENOS_BUILD_TESTS=ON' \
+  '-DOPENBUENOS_INSTALL_SELFTEST=ON' \
+  '-DOPENBUENOS_WERROR=OFF' \
+  '-DFREETPU_RUNTIME_WERROR=OFF'; do
+  grep -qF -- "$flag" PKGBUILD || fail "PKGBUILD missing CMake flag $flag"
+done
+grep -q 'ctest --test-dir .*build-lib.* --output-on-failure' PKGBUILD \
+  || fail "check() runs ctest on build-lib"
+pass "CMake flags and ctest check() match contract"
+
+# Verify udev rules for /dev/edgetpu-soc and /dev/dma_heap/system
+rules=vendor/udev/rules.d/99-edgetpu.rules
+[[ -f $rules ]] || fail "99-edgetpu.rules missing"
+grep -q 'KERNEL=="edgetpu-soc", SUBSYSTEM=="misc", MODE="0660", GROUP="video", TAG+="uaccess"' "$rules" \
+  || fail "udev rule missing /dev/edgetpu-soc entry"
+grep -q 'KERNEL=="system", SUBSYSTEM=="dma_heap", MODE="0660", GROUP="video", TAG+="uaccess"' "$rules" \
+  || fail "udev rule missing /dev/dma_heap/system entry"
+pass "udev rules grant non-root video+uaccess on edgetpu-soc and dma_heap/system"
+
+# Verify zero proprietary blobs and zero multi-phone clustering references
+[[ -f LICENSE && -f version && -f README.md ]] || fail "missing LICENSE, version, or README.md"
+! grep -qiE 'ggml-rpc-server|GGML_RPC=ON' PKGBUILD README.md \
+  || fail "must not bundle deferred multi-phone GGML_RPC clustering"
+pass "clean-room metadata and scope exclusion verified"

@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+# Maintainer: Bobby Bones <saariuscrypto@gmail.com>
+#
+# Clean-room userspace stack for Tensor G5 (laguna) EdgeTPU (/dev/edgetpu-soc):
+#   - libopenbuenos static library (built -fPIC, wired with FreeTile BUENOS_A0) + CMake package + headers
+#   - tpu_soc_probe, openbuenos_selftest, and tpu_baremetal_runner CLI utilities
+#   - udev rules for non-root access to /dev/edgetpu-soc and /dev/dma_heap/system
+#
+# Aligned 1:1 with Track P5-A (saariuslystoned/freetpu):
+#   - Branch: feat/freetile-buenos-wire
+#   - Commit: 66e73ef6c54f8a23c0d987844f16d5c5787da201
+#   - Pure C++17 (zero LLVM/MLIR/Python, zero Google proprietary .so libraries)
+#   - Explicit scope: single-device local EdgeTPU runtime only (no multi-phone GGML_RPC clustering)
+#
+# Runtime emitter selection:
+#   - OPENBUENOS_FREETILE=1 enables the zero-dep C++17 FreeTile BUENOS_A0 VLIW/DGC0
+#     emitter with automatic fallback to ob_gemm_emitter for unsupported shapes/epilogues
+#     (default OPENBUENOS_FREETILE=0 unless -DOPENBUENOS_FREETILE_DEFAULT_ON=ON).
+#
+# Offline local build hook:
+#   - Export FREETPU_SRC=/path/to/freetpu-worktree (at 66e73ef6c54f8a23c0d987844f16d5c5787da201)
+#     to build offline without downloading the GitHub archive.
+#
+# Proprietary firmware (google/edgetpu-buenos.fw) and the RV64 interpreter binary
+# (dive_interp_rv64.bin) are NOT packaged here; extract them from the device
+# owner's vendor/factory image via tools/extract-vendor-firmware (CONTRIBUTING.md §7).
+# Runtime probes /usr/lib/firmware/google/dive_interp_rv64.bin,
+# /lib/firmware/google/dive_interp_rv64.bin,
+# /usr/share/omamobile/tpu/dive_interp_rv64.bin, and OPENBUENOS_DIVE_INTERP_PATH.
+
+pkgname=omamobile-freetpu
+pkgver=$(cat "${startdir:-.}/version")
+_freetpu_branch=feat/freetile-buenos-wire
+_freetpu_commit=66e73ef6c54f8a23c0d987844f16d5c5787da201
+pkgrel=2
+pkgdesc='Clean-room userspace runtime, FreeTile BUENOS_A0 emitter, and bare-metal runner for Google Tensor G5 (laguna) EdgeTPU'
+arch=(aarch64)
+url='https://github.com/saariuslystoned/freetpu'
+license=(Apache-2.0)
+depends=(glibc gcc-libs)
+makedepends=(cmake ninja gcc)
+optdepends=(
+  'linux-omamobile: mainline Tensor G5 EdgeTPU kernel driver (/dev/edgetpu-soc)'
+)
+provides=(libopenbuenos freetpu freetile)
+options=(staticlibs)
+if [[ -z ${FREETPU_SRC:-} ]]; then
+  source=(
+    "freetpu-$_freetpu_commit.tar.gz::$url/archive/$_freetpu_commit.tar.gz"
+  )
+  sha256sums=('SKIP')
+else
+  source=()
+  sha256sums=()
+fi
+
+_freetpu_src() {
+  if [[ -n ${FREETPU_SRC:-} && -d ${FREETPU_SRC} ]]; then
+    printf '%s\n' "$FREETPU_SRC"
+  else
+    printf '%s\n' "$srcdir/freetpu-$_freetpu_commit"
+  fi
+}
+
+build() {
+  local src
+  src=$(_freetpu_src)
+
+  cmake -S "$src/libopenbuenos" -B "$srcdir/build-lib" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DOPENBUENOS_ENABLE_FREETILE=ON \
+    -DOPENBUENOS_FREETILE_DEFAULT_ON=OFF \
+    -DOPENBUENOS_BUILD_TESTS=ON \
+    -DOPENBUENOS_INSTALL_SELFTEST=ON \
+    -DOPENBUENOS_WERROR=OFF
+  cmake --build "$srcdir/build-lib"
+
+  cmake -S "$src/runtime" -B "$srcdir/build-runtime" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DFREETPU_RUNTIME_WERROR=OFF
+  cmake --build "$srcdir/build-runtime"
+}
+
+check() {
+  ctest --test-dir "$srcdir/build-lib" --output-on-failure
+}
+
+package() {
+  local src
+  src=$(_freetpu_src)
+
+  DESTDIR="$pkgdir" cmake --install "$srcdir/build-lib"
+  DESTDIR="$pkgdir" cmake --install "$srcdir/build-runtime"
+
+  install -Dm644 "$startdir/vendor/udev/rules.d/99-edgetpu.rules" \
+    "$pkgdir/usr/lib/udev/rules.d/99-edgetpu.rules"
+  install -Dm644 "$src/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
