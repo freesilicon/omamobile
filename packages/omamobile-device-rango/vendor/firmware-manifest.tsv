@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+# Owner-extracted vendor firmware manifest for Google Pixel 10 Pro Fold (rango, laguna).
+# ZERO proprietary firmware blobs are shipped or committed by Omamobile (CONTRIBUTING.md §7).
+# Extract from the owner's own matching factory/vendor image via tools/extract-vendor-firmware -d rango.
+#
+# Format: subsystem	vendor_source	installed_target	status	notes
+edgetpu	vendor/firmware/google/edgetpu-buenos.fw	/usr/lib/firmware/updates/google/edgetpu-buenos.fw	[V]	Tensor G5 EdgeTPU (buenos) GSA-authenticated kernel firmware
+edgetpu-dive	local-extract:ext[1](edgetpu-buenos.fw)	/usr/lib/firmware/google/dive_interp_rv64.bin	[V]	DIVE RV64 interpreter extracted locally by owner for libopenbuenos (never redistributed)
+gpu	vendor/firmware/rgx.fw.signed.71.2.2448.1212	/usr/lib/firmware/updates/google/rgx.fw.signed	[V]	PowerVR Volcanic DXT-48-1536 (71.2.2448.1212) Trusty/TF-A signed firmware
+wifi	vendor/firmware/fw_bcmdhd.bin	/usr/lib/firmware/updates/brcm/brcmfmac4390-pcie.google,lga-rango.bin	[V]	Broadcom BCM4390/5 (PCI 14e4:4438 on 3c500000.pcie) board-qualified WLAN firmware
+wifi-generic	vendor/firmware/fw_bcmdhd.bin	/usr/lib/firmware/updates/brcm/brcmfmac4390-pcie.bin	[V]	Broadcom BCM4390/5 (PCI 14e4:4438) live-observed brcmfmac request path on Laguna
+wifi-nvram	vendor/firmware/bcmdhd.cal	/usr/lib/firmware/updates/brcm/brcmfmac4390-pcie.google,lga-rango.txt	[I]	Broadcom BCM4390 NVRAM calibration (verify SKU suffix if region-specific)
+wifi-clm	vendor/firmware/bcmdhd_clm.blob	/usr/lib/firmware/updates/brcm/brcmfmac4390-pcie.google,lga-rango.clm_blob	[I]	Broadcom BCM4390 CLM regulatory blob
+wifi-txcap	vendor/firmware/bcmdhd_txcap.blob	/usr/lib/firmware/updates/brcm/brcmfmac4390-pcie.google,lga-rango.txcap_blob	[I]	Broadcom BCM4390 TX capability blob
+bluetooth	vendor/firmware/brcm/BCM.hcd	/usr/lib/firmware/updates/brcm/BCM.google,lga-rango.hcd	[I]	Broadcom HCI UART Bluetooth patch
+aoc	vendor/firmware/aoc.bin	/usr/lib/firmware/updates/google/aoc-rango.bin	[V]	Always-on Compute DSP firmware (GSA/Trusty-authenticated; matches Track P5-B overlay path)
+sensors	vendor/etc/sensors/registry/	/usr/share/omamobile/sensors/registry/	[I]	AoC sensor registry directory

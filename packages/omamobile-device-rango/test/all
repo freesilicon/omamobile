@@ -1,0 +1,177 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Tests for omamobile-device-rango. reboot-to is compiled from
+# src/reboot-to.c in this directory, so a copied package still builds.
+# Do not execute reboot-to.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+bash -n build || fail "build parses"
+bash -n install || fail "install parses"
+sh -n bin/omamobile-rango-lid-sync || fail "omamobile-rango-lid-sync parses"
+sh -n uwsm/env.d/omamobile-laguna-graphics || fail "graphics env parses"
+pass "scripts parse"
+
+grep -q '\.\./\.\.' build install && fail "build or install reaches outside the package directory"
+pass "build and install stay inside the package directory"
+
+if [[ -f ../omamobile-device-cheetah/src/reboot-to.c ]]; then
+  cmp -s src/reboot-to.c ../omamobile-device-cheetah/src/reboot-to.c \
+    || fail "reboot-to.c drifted from the cheetah package"
+  pass "reboot-to.c matches the cheetah source"
+  cmp -s vendor/udev/rules.d/70-omamobile-dma-heap.rules \
+    ../omamobile-device-cheetah/vendor/udev/rules.d/70-omamobile-dma-heap.rules \
+    || fail "the dma-heap rule drifted from the cheetah package"
+  pass "the dma-heap rule matches the cheetah package"
+  cmp -s etc/omamobile-mirrorlist ../omamobile-device-cheetah/etc/omamobile-mirrorlist \
+    || fail "the mirrorlist drifted from the cheetah package"
+  pass "the mirrorlist matches the cheetah package"
+  cmp -s omamobile-device-rango.install \
+    ../omamobile-device-cheetah/omamobile-device-cheetah.install \
+    || fail "the pacman install script drifted from the cheetah package"
+  pass "the pacman install script matches the cheetah package"
+  cmp -s vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    ../omamobile-device-cheetah/vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    || fail "the power-key drop-in drifted from the cheetah package"
+  pass "the power-key drop-in matches the cheetah package"
+  cmp -s vendor/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+    ../omamobile-device-cheetah/vendor/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+    || fail "the reboot-watchdog drop-in drifted from the cheetah package"
+  pass "the reboot-watchdog drop-in matches the cheetah package"
+fi
+if [[ -f ../omamobile-device-felix/vendor/systemd/logind.conf.d/10-omamobile-lid.conf ]]; then
+  cmp -s vendor/systemd/logind.conf.d/10-omamobile-lid.conf \
+    ../omamobile-device-felix/vendor/systemd/logind.conf.d/10-omamobile-lid.conf \
+    || fail "the lid drop-in drifted from the felix package"
+  pass "the lid drop-in matches the felix package"
+fi
+
+grep -q 'omamobile-keyring' PKGBUILD || fail "pacman needs omamobile-keyring"
+grep -q '^install=omamobile-device-rango.install$' PKGBUILD \
+  || fail "the pacman install script is not named"
+[[ -f etc/omamobile-mirrorlist && -f omamobile-device-rango.install ]] \
+  || fail "the pacman mirrorlist or install script is missing"
+pass "pacman gets the keyring, the mirrorlist, and the install script"
+
+if [[ -f ../../device/rango/device.conf ]]; then
+  cmp -s device.conf ../../device/rango/device.conf \
+    || fail "device.conf drifted from the descriptor"
+  pass "device.conf matches the descriptor"
+fi
+
+# Verify UFS_RW safety allowlist excludes Slot A, zoned LUN sde, and all NV/calibration partitions
+ufs_rw=$(sed -n 's/^UFS_RW="\(.*\)"$/\1/p' device.conf)
+[[ $ufs_rw == "boot_b init_boot_b vendor_boot_b vendor_kernel_boot_b dtbo_b userdata" ]] \
+  || fail "unexpected UFS_RW allowlist: $ufs_rw"
+for forbidden in boot_a init_boot_a vendor_boot_a vendor_kernel_boot_a dtbo_a \
+                 persist efs efs_backup modem_userdata modem_a modem_b \
+                 devinfo pinfo trusty_persist trusty_userdata mfg_data blenv rdbl vbmeta_a vbmeta_b abl_a abl_b zoned_device; do
+  [[ " $ufs_rw " != *" $forbidden "* ]] || fail "UFS_RW must not include $forbidden"
+done
+! grep -q '^UFS_RW_LUNS=' device.conf || fail "rango keeps UFS_RW_LUNS unset so sdb/sdc/sdd/sde stay RO"
+pass "UFS_RW allowlist strictly excludes Slot A, LUN 4 sde, and all NV/calibration partitions"
+
+./build "$tmp/build" || fail "reboot-to compiles"
+[[ -x $tmp/build/reboot-to ]] || fail "reboot-to is not executable"
+pass "reboot-to compiles"
+
+./install "$tmp/root" "$tmp/build"
+for f in usr/bin/reboot-to \
+         usr/bin/omamobile-rango-lid-sync \
+         usr/lib/udev/rules.d/10-omamobile-storage.rules \
+         usr/lib/udev/rules.d/70-omamobile-dma-heap.rules \
+         usr/lib/systemd/network/20-usb-gadget.network \
+         usr/lib/systemd/logind.conf.d/10-omamobile-lid.conf \
+         usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf \
+         usr/lib/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+         usr/lib/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf \
+         usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf \
+         usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf \
+         usr/share/uwsm/env.d/omamobile-laguna-graphics \
+         usr/share/omamobile/device-rango/hypr/monitors.lua \
+         usr/share/omamobile/device-rango/firmware-manifest.tsv \
+         usr/share/omamobile/device.conf \
+         usr/share/omamobile/device-rango/version \
+         usr/share/licenses/omamobile-device-rango/LICENSE \
+         etc/pacman.d/omamobile-mirrorlist; do
+  [[ -f $tmp/root/$f ]] || fail "install stages $f"
+done
+[[ -x $tmp/root/usr/bin/omamobile-rango-lid-sync ]] || fail "omamobile-rango-lid-sync is executable"
+
+# Verify storage guard covers sda..sde (including zoned LUN sde)
+grep -q 'KERNEL=="sda", MODE="0000"' "$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules" \
+  || fail "the whole-disk node is made inaccessible"
+grep -q 'KERNEL=="sd\[b-e\]"' "$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules" \
+  || fail "secondary LUNs including LUN 4 sde are hidden from UDisks"
+grep -q 'KERNEL=="sd\[a-e\]\[0-9\]\*", ENV{ID_PART_ENTRY_NAME}!="userdata"' \
+  "$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules" \
+  || fail "userdata is the only partition desktop tools may see"
+
+# Verify live-proven transform = 3 and SW_LID fold switching in Hyprland config and helper
+mon="$tmp/root/usr/share/omamobile/device-rango/hypr/monitors.lua"
+grep -q 'transform = 3' "$mon" || fail "inner display DSI-2 must use transform = 3"
+! grep -q 'transform = 1' "$mon" || fail "inner display DSI-2 must not use inverted transform = 1"
+grep -q 'switch:on:gpio-keys' "$mon" || fail "monitors.lua binds switch:on:gpio-keys"
+grep -q 'switch:off:gpio-keys' "$mon" || fail "monitors.lua binds switch:off:gpio-keys"
+grep -q 'switch:on:Lid Switch' "$mon" || fail "monitors.lua binds switch:on:Lid Switch"
+grep -q 'switch:off:Lid Switch' "$mon" || fail "monitors.lua binds switch:off:Lid Switch"
+
+syncbin="$tmp/root/usr/bin/omamobile-rango-lid-sync"
+grep -q 'transform = 3' "$syncbin" || fail "lid sync helper uses transform = 3"
+grep -q 'evtest --query' "$syncbin" || fail "lid sync helper queries EV_SW SW_LID"
+# Dry-test lid sync open/close dispatch against a stand-in hyprctl
+mkdir -p "$tmp/fakebin"
+cat > "$tmp/fakebin/hyprctl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$HYPRCTL_LOG"
+exit 0
+EOF
+chmod +x "$tmp/fakebin/hyprctl"
+HYPRCTL_LOG="$tmp/hyprctl.log" PATH="$tmp/fakebin:$PATH" "$syncbin" close
+grep -q 'output = "DSI-1".*scale = 2.4' "$tmp/hyprctl.log" || fail "lid-sync close activates cover DSI-1"
+HYPRCTL_LOG="$tmp/hyprctl.log" PATH="$tmp/fakebin:$PATH" "$syncbin" open
+grep -q 'output = "DSI-2".*transform = 3' "$tmp/hyprctl.log" || fail "lid-sync open activates inner DSI-2 with transform = 3"
+pass "rango dual-display transform = 3 and SW_LID sync verified"
+
+for fw in edgetpu-buenos.fw dive_interp_rv64.bin rgx.fw.signed brcm/brcmfmac4390-pcie.bin brcmfmac4390-pcie.google,lga-rango.bin BCM.google,lga-rango.hcd google/aoc-rango.bin; do
+  grep -qF "$fw" "$tmp/root/usr/share/omamobile/device-rango/firmware-manifest.tsv" \
+    || fail "firmware manifest lists $fw"
+done
+grep -q '^PACKAGE=omamobile-device-rango$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the installed descriptor is rango"
+grep -q 'omamobile-modem-policy' PKGBUILD && grep -q 'omamobile-sitd-policy' PKGBUILD \
+  || fail "PKGBUILD provides omamobile-modem-policy and omamobile-sitd-policy for opt-in omamobile-modem-sit"
+grep -qx 'ConditionPathExists=/etc/omamobile/laguna-modem-enable' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf" \
+  || fail "modem unit stays disabled by default"
+grep -qx 'Requisite=omamobile-modem.service' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf" \
+  || fail "sitd drop-in uses Requisite (never pulls generic modem unit)"
+grep -qx 'ConditionPathExists=/etc/omamobile/laguna-modem-enable' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf" \
+  || fail "sitd drop-in stays disabled by default"
+[[ ! -d $tmp/root/usr/lib/systemd/system/multi-user.target.wants ]] \
+  || fail "no units auto-enabled at boot"
+
+lid="$tmp/root/usr/lib/systemd/logind.conf.d/10-omamobile-lid.conf"
+grep -q '^HandleLidSwitch=ignore$' "$lid" || fail "a closed fold must not suspend"
+grep -q '^HandleLidSwitchDocked=ignore$' "$lid" || fail "a docked closed fold must not suspend"
+grep -q '^HandleLidSwitchExternalPower=ignore$' "$lid" || fail "external power must not suspend a closed fold"
+
+for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
+              usr/lib/systemd/system/omamobile-boot-success.service \
+              usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
+              usr/bin/omamobile-camera-start; do
+  [[ ! -e $tmp/root/$absent ]] || fail "install includes $absent"
+done
+pass "install stages storage/dma-heap rules, dual-display SW_LID config, firmware manifest, and nothing unsafe"
+
+# USB is the last gateway
+net=vendor/systemd/network/20-usb-gadget.network
+! sed -n '/^\[Network\]/,/^\[/p' "$net" | grep -c '^Gateway=' >/dev/null || fail "usb0 sets no default route in [Network] (metric 0)"
+metric=$(sed -n '/^\[Route\]/,/^\[/{s/^Metric=//p}' "$net")
+[[ ${metric:-0} -gt 700 ]] || fail "usb0's gateway goes after Wi-Fi (600) and mobile data (700)"
+pass "USB is the last gateway"

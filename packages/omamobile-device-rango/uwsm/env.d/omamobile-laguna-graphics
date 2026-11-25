@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT
+# Laguna (Tensor G5) session graphics environment, sourced by uwsm from
+# /usr/share/uwsm/env.d (POSIX shell; ~/.config/uwsm/env runs after it).
+#
+# Default is llvmpipe / kms_swrast software rendering over VeriSilicon dc9x00
+# KMS scanout so the desktop always boots reliably. When no DRM render node
+# (/dev/dri/renderD*) is present, AQ_NO_AUX_RENDERER=1 prevents Aquamarine
+# from failing with EGL_BAD_PARAMETER on the KMS-only card.
+#
+# Opt-in PowerVR Volcanic (DXT-48-1536) Vulkan ICD (omamobile-mesa-pvr-volcanic)
+# activates only when /dev/dri/renderD128 exists AND the owner explicitly
+# creates /etc/omamobile/pvr-volcanic-enable.
+if [ -c /dev/dri/renderD128 ] && [ -f /etc/omamobile/pvr-volcanic-enable ]; then
+  export LIBGL_ALWAYS_SOFTWARE=0
+  unset GBM_ALWAYS_SOFTWARE GALLIUM_DRIVER MESA_LOADER_DRIVER_OVERRIDE AQ_NO_AUX_RENDERER
+else
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export GBM_ALWAYS_SOFTWARE=1
+  export GALLIUM_DRIVER=llvmpipe
+  export MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+  export EGL_PLATFORM=gbm
+  if [ ! -c /dev/dri/renderD128 ]; then
+    export AQ_NO_AUX_RENDERER=1
+  fi
+fi

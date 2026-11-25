@@ -1,0 +1,82 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Synchronize Hyprland DSI-1 (cover rgeb) / DSI-2 (inner rgea) output state
+# to the Pixel 10 Pro Fold (rango) SW_LID hall switch.
+set -eu
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && [ -d "$XDG_RUNTIME_DIR/hypr" ]; then
+	for sock in "$XDG_RUNTIME_DIR/hypr/"*/.socket.sock; do
+		[ -S "$sock" ] || continue
+		sig="${sock%/.socket.sock}"
+		HYPRLAND_INSTANCE_SIGNATURE="${sig##*/}"
+		export HYPRLAND_INSTANCE_SIGNATURE
+		break
+	done
+fi
+
+mode="${1:-sync}"
+
+find_lid_dev() {
+	for ev in /sys/class/input/event*; do
+		[ -d "$ev" ] || continue
+		name=$(cat "$ev/device/name" 2>/dev/null || true)
+		case "$name" in
+			*gpio-keys*|*Lid*|*lid*)
+				sw_hex=$(cat "$ev/device/capabilities/sw" 2>/dev/null || echo 0)
+				if [ "$((0x${sw_hex##* } & 1))" -ne 0 ]; then
+					printf '/dev/input/%s\n' "${ev##*/}"
+					return 0
+				fi
+				;;
+		esac
+	done
+	return 1
+}
+
+run_eval() {
+	tries=0
+	while [ "$tries" -lt 3 ]; do
+		if hyprctl eval "$1" >/dev/null 2>&1; then
+			return 0
+		fi
+		tries=$((tries + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+apply_closed() {
+	run_eval 'hl.monitor({ output = "DSI-2", disabled = true }); hl.monitor({ output = "DSI-1", mode = "preferred", position = "0x0", scale = 2.4, disabled = false })' || true
+}
+
+apply_open() {
+	run_eval 'hl.monitor({ output = "DSI-1", disabled = true }); hl.monitor({ output = "DSI-2", mode = "preferred", position = "0x0", scale = 2, transform = 3, disabled = false })' || true
+}
+
+case "$mode" in
+	close|closed|on)
+		apply_closed
+		;;
+	open|off)
+		apply_open
+		;;
+	sync)
+		dev=$(find_lid_dev || true)
+		if [ -n "$dev" ] && command -v evtest >/dev/null 2>&1; then
+			set +e
+			evtest --query "$dev" EV_SW SW_LID
+			rc=$?
+			set -e
+			if [ "$rc" -eq 10 ]; then
+				apply_closed
+			else
+				apply_open
+			fi
+		fi
+		;;
+	*)
+		echo "usage: $0 [sync|open|close]" >&2
+		exit 2
+		;;
+esac
