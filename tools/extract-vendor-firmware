@@ -1,8 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
 # extract-vendor-firmware: stage device-specific firmware from the owner's
-# own image. Pixel factory images support cheetah, panther, raven, tegu and
-# husky; dipper takes vendor, modem and Bluetooth partition roots (-d).
+# own image. Pixel factory images support cheetah, panther, raven, tegu,
+# husky, mustang and rango; dipper takes vendor, modem and Bluetooth
+# partition roots (-d).
 #
 # Proprietary firmware is not ours to redistribute, so Omamobile never
 # ships it. This stages files from the user's own image and renames them to
@@ -175,7 +176,7 @@ Usage: extract-vendor-firmware [-o OUTDIR] [-w WORKDIR] [-f] SOURCE
   -o DIR   staging root to write into (default: ./out/vendor-firmware); a
            successful run replaces this script's earlier outputs there
   -w DIR   scratch directory for the ~1 GB vendor.img (default: a temp dir in \$TMPDIR)
-  -d DEV   cheetah (default), panther, raven, tegu, husky or dipper
+  -d DEV   cheetah (default), panther, raven, tegu, husky, mustang, rango or dipper
   -s SKU   husky: the hardware SKU (androidboot.hardware.sku), which picks the NVRAM
   -f       skip the device checks (android-info.txt board=$DEVICE, the vendor build.prop);
            dipper always requires vendor/build.prop to identify the backup as dipper
@@ -295,6 +296,30 @@ case $DEVICE_OPT in
       "firmware/cs40l26-dvl.bin|cs40l26-dvl.bin"
       "firmware/cs40l26-calib.wmfw|cs40l26-calib.wmfw"
     ) ;;
+  mustang|rango)
+    # Pixel 10 Pro XL (mustang) and Pixel 10 Pro Fold (rango), SoC laguna
+    # (Tensor G5): EdgeTPU (buenos), PowerVR Volcanic (DXT-48-1536,
+    # 71.2.2448.1212), Broadcom BCM4390 (PCI 14e4:4438) Wi-Fi + Bluetooth,
+    # AoC DSP (board-scoped google/aoc-<device>.bin), and AoC sensor registry.
+    # The RV64 DIVE interpreter (dive_interp_rv64.bin, ext[1]) is extracted
+    # locally by the owner's freetpu tool from edgetpu-buenos.fw and is never
+    # committed or redistributed.
+    BOARD="google,lga-$DEVICE_OPT"
+    DEVICE="$DEVICE_OPT"
+    FW_BASE="brcmfmac4390-pcie"
+    WIFI_CHIP="4390"
+    BT_CHIP="BCM4390"
+    MAP=(
+      "firmware/google/edgetpu-buenos.fw|google/edgetpu-buenos.fw"
+      "firmware/rgx.fw.signed.71.2.2448.1212|google/rgx.fw.signed"
+      "firmware/fw_bcmdhd.bin|brcm/$FW_BASE.$BOARD.bin"
+      "firmware/fw_bcmdhd.bin|brcm/$FW_BASE.bin"
+      "firmware/bcmdhd.cal|brcm/$FW_BASE.$BOARD.txt"
+      "firmware/bcmdhd_clm.blob|brcm/$FW_BASE.$BOARD.clm_blob"
+      "firmware/bcmdhd_txcap.blob|brcm/$FW_BASE.$BOARD.txcap_blob"
+      "firmware/brcm/BCM.hcd|brcm/BCM.$BOARD.hcd"
+      "firmware/aoc.bin|google/aoc-$DEVICE.bin"
+    ) ;;
   dipper)
     DEVICE=dipper
     MAP=(
@@ -308,7 +333,7 @@ case $DEVICE_OPT in
       "bluetooth/image/crnv21.bin|qca/Xiaomi/dipper/crnv21.bin"
       "bluetooth/image/crbtfw21.tlv|qca/crbtfw21.tlv"
     ) ;;
-  *) die "unknown device $DEVICE_OPT (cheetah, panther, raven, tegu, husky or dipper)" ;;
+  *) die "unknown device $DEVICE_OPT (cheetah, panther, raven, tegu, husky, mustang, rango or dipper)" ;;
 esac
 [[ $DEVICE == husky || -z $SKU ]] || die "-s is for husky only"
 # The camera data flow (tools/extract-camera-data) exists for cheetah only
@@ -596,6 +621,15 @@ if [[ $DEVICE == panther ]]; then
   mfc_ver=$(od -An -tx4 -j $((mfc_size - 4)) -N4 "$dest/s5p-mfc-v15.fw" | tr -d ' ')
 fi
 
+# Tensor G5 (laguna: mustang, rango): signed PowerVR Volcanic GPU firmware
+# carries the "GPUF" header (0x46555047); EdgeTPU buenos firmware is non-empty.
+if [[ $DEVICE == mustang || $DEVICE == rango ]]; then
+  grep -aq 'GPUF' "$dest/google/rgx.fw.signed" ||
+    die "rgx.fw.signed.71.2.2448.1212 does not carry a GPUF firmware header"
+  [[ -s "$dest/google/edgetpu-buenos.fw" ]] ||
+    die "edgetpu-buenos.fw is empty"
+fi
+
 ver= bt=""
 if [[ $DEVICE != dipper ]]; then
   ver=$(grep -ao 'Version=[0-9.]* ([^)]*)' "$brcm/$FW_BASE.$BOARD.bin" | sed -n 1p)
@@ -623,6 +657,11 @@ fi
   say "Video codec firmware: s5p-mfc-v15.fw (version 0x$mfc_ver)"
 [[ $DEVICE == tegu ]] &&
   say "AoC firmware: aoc-tegu.bin ($(stat -c %s "$dest/aoc-tegu.bin") bytes)"
+if [[ $DEVICE == mustang || $DEVICE == rango ]]; then
+  say "EdgeTPU firmware: google/edgetpu-buenos.fw ($(stat -c %s "$dest/google/edgetpu-buenos.fw") bytes; extract ext[1] dive_interp_rv64.bin locally via freetpu)"
+  say "PowerVR Volcanic GPU firmware: google/rgx.fw.signed ($(stat -c %s "$dest/google/rgx.fw.signed") bytes)"
+  say "AoC firmware: google/aoc-$DEVICE.bin ($(stat -c %s "$dest/google/aoc-$DEVICE.bin") bytes)"
+fi
 [[ $DEVICE == cheetah || $DEVICE == panther || $DEVICE == raven ]] &&
   say "Speaker protection: cs35l41-dsp1-spk-prot-$DEVICE.wmfw and the top and bottom tunings"
 # Publish: move the previous outputs aside, then the new ones into place, all

@@ -96,6 +96,19 @@ make_vendor() {
   local v=$1 dev=$2 g=$3 f
   mkdir -p "$v/firmware/brcm" "$v/etc/sensors/registry" "$v/apex"
   printf 'ro.product.vendor.device=%s\nro.vendor.build.fingerprint=fictional/%s\n' "$dev" "$g" > "$v/build.prop"
+  if [[ $dev == mustang || $dev == rango ]]; then
+    mkdir -p "$v/firmware/google"
+    printf 'fictional edgetpu buenos %s\n' "$g" > "$v/firmware/google/edgetpu-buenos.fw"
+    printf 'pad GPUF volcanic %s\n' "$g" > "$v/firmware/rgx.fw.signed.71.2.2448.1212"
+    printf 'fictional 4390-roml Version=2.0.1 (%s)\n' "$g" > "$v/firmware/fw_bcmdhd.bin"
+    printf 'NVRAMRev=%s\n' "$g" > "$v/firmware/bcmdhd.cal"
+    echo "clm $g" > "$v/firmware/bcmdhd_clm.blob"
+    echo "txcap $g" > "$v/firmware/bcmdhd_txcap.blob"
+    echo "BCM4390 fictional $g" > "$v/firmware/brcm/BCM.hcd"
+    echo "aoc laguna $g" > "$v/firmware/aoc.bin"
+    echo "{\"accel\": \"$g\"}" > "$v/etc/sensors/registry/fictional_accel.json"
+    return
+  fi
   if [[ $dev == husky ]]; then
     printf 'fictional 4398d0-roml Version=1.0.3 (%s)\n' "$g" > "$v/firmware/fw_bcmdhd.bin_4398_d0"
     printf 'NVRAMRev=%s\n' "$g" > "$v/firmware/bcmdhd.cal_USI_G5SN_9957_V17"
@@ -136,6 +149,8 @@ make_vendor "$t/v1" cheetah gen1
 make_vendor "$t/v2" cheetah gen2
 make_vendor "$t/husky" husky gen3
 make_vendor "$t/panther" panther gen4
+make_vendor "$t/mustang" mustang gen5
+make_vendor "$t/rango" rango gen6
 
 # Dipper reads local backup copies and keeps the split modem firmware beside
 # each renamed MDT header.
@@ -316,6 +331,36 @@ if run "$t/panther" "$t/ext4.img" -d panther -o "$o"; then
 else
   cat "$t/log"; fail "panther: a run succeeds"
 fi
+
+for lga_dev in mustang rango; do
+  o=$t/$lga_dev-out n=$failed
+  rm -rf "$o"
+  want_lga=$(printf '%s\n' \
+    "brcm/BCM.google,lga-$lga_dev.hcd" \
+    "brcm/brcmfmac4390-pcie.bin" \
+    "brcm/brcmfmac4390-pcie.google,lga-$lga_dev.bin" \
+    "brcm/brcmfmac4390-pcie.google,lga-$lga_dev.clm_blob" \
+    "brcm/brcmfmac4390-pcie.google,lga-$lga_dev.txcap_blob" \
+    "brcm/brcmfmac4390-pcie.google,lga-$lga_dev.txt" \
+    "google/aoc-$lga_dev.bin" \
+    "google/edgetpu-buenos.fw" \
+    "google/rgx.fw.signed" | LC_ALL=C sort)
+  if run "$t/$lga_dev" "$t/ext4.img" -d "$lga_dev" -o "$o"; then
+    [[ $(listed "$o") == "$want_lga" ]] || fail "$lga_dev: the checksum list names laguna's 9 firmware files"
+    (cd "$o/$FW" && sha256sum --quiet -c "$o/vendor-firmware.sha256") || fail "$lga_dev: checksums match"
+    grep -qF 'EdgeTPU firmware: google/edgetpu-buenos.fw' "$t/log" || fail "$lga_dev: EdgeTPU firmware reported"
+    grep -qF 'PowerVR Volcanic GPU firmware: google/rgx.fw.signed' "$t/log" || fail "$lga_dev: GPU firmware reported"
+    grep -qF "AoC firmware: google/aoc-$lga_dev.bin" "$t/log" || fail "$lga_dev: AoC firmware reported"
+    [[ -f "$o/$REG/fictional_accel.json" ]] || fail "$lga_dev: sensor registry copied"
+    pass_since "$n" "$lga_dev: stages EdgeTPU, Volcanic GPU, Wi-Fi/BT, AoC, and sensor registry"
+  else
+    cat "$t/log"; fail "$lga_dev: a run succeeds"
+  fi
+done
+rm -rf "$t/mustang-badrgx"; cp -r "$t/mustang" "$t/mustang-badrgx"
+printf 'not a volcanic gpu firmware\n' > "$t/mustang-badrgx/firmware/rgx.fw.signed.71.2.2448.1212"
+refuses "mustang: an rgx.fw.signed without GPUF header" "does not carry a GPUF firmware header" \
+  "$t/mustang-badrgx" "$t/ext4.img" -d mustang
 
 # --- Failed runs leave the previous generation ----------------------------------
 rm -rf "$t/panther-badmfc"; cp -r "$t/panther" "$t/panther-badmfc"
