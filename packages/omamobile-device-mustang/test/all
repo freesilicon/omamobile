@@ -1,0 +1,137 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Tests for omamobile-device-mustang. reboot-to is compiled from
+# src/reboot-to.c in this directory, so a copied package still builds.
+# Do not execute reboot-to.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+bash -n build || fail "build parses"
+bash -n install || fail "install parses"
+sh -n uwsm/env.d/omamobile-laguna-graphics || fail "graphics env parses"
+pass "scripts parse"
+
+grep -q '\.\./\.\.' build install && fail "build or install reaches outside the package directory"
+pass "build and install stay inside the package directory"
+
+if [[ -f ../omamobile-device-cheetah/src/reboot-to.c ]]; then
+  cmp -s src/reboot-to.c ../omamobile-device-cheetah/src/reboot-to.c \
+    || fail "reboot-to.c drifted from the cheetah package"
+  pass "reboot-to.c matches the cheetah source"
+  cmp -s vendor/udev/rules.d/10-omamobile-storage.rules \
+    ../omamobile-device-cheetah/vendor/udev/rules.d/10-omamobile-storage.rules \
+    || fail "the storage rule drifted from the cheetah package"
+  pass "the storage rule matches the cheetah package"
+  cmp -s vendor/udev/rules.d/70-omamobile-dma-heap.rules \
+    ../omamobile-device-cheetah/vendor/udev/rules.d/70-omamobile-dma-heap.rules \
+    || fail "the dma-heap rule drifted from the cheetah package"
+  pass "the dma-heap rule matches the cheetah package"
+  cmp -s etc/omamobile-mirrorlist ../omamobile-device-cheetah/etc/omamobile-mirrorlist \
+    || fail "the mirrorlist drifted from the cheetah package"
+  pass "the mirrorlist matches the cheetah package"
+  cmp -s omamobile-device-mustang.install \
+    ../omamobile-device-cheetah/omamobile-device-cheetah.install \
+    || fail "the pacman install script drifted from the cheetah package"
+  pass "the pacman install script matches the cheetah package"
+  cmp -s vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    ../omamobile-device-cheetah/vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+    || fail "the power-key drop-in drifted from the cheetah package"
+  pass "the power-key drop-in matches the cheetah package"
+  cmp -s vendor/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+    ../omamobile-device-cheetah/vendor/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+    || fail "the reboot-watchdog drop-in drifted from the cheetah package"
+  pass "the reboot-watchdog drop-in matches the cheetah package"
+fi
+
+grep -q 'omamobile-keyring' PKGBUILD || fail "pacman needs omamobile-keyring"
+grep -q '^install=omamobile-device-mustang.install$' PKGBUILD \
+  || fail "the pacman install script is not named"
+[[ -f etc/omamobile-mirrorlist && -f omamobile-device-mustang.install ]] \
+  || fail "the pacman mirrorlist or install script is missing"
+pass "pacman gets the keyring, the mirrorlist, and the install script"
+
+if [[ -f ../../device/mustang/device.conf ]]; then
+  cmp -s device.conf ../../device/mustang/device.conf \
+    || fail "device.conf drifted from the descriptor"
+  pass "device.conf matches the descriptor"
+fi
+
+# Verify UFS_RW safety allowlist excludes Slot A and NV/calibration partitions
+ufs_rw=$(sed -n 's/^UFS_RW="\(.*\)"$/\1/p' device.conf)
+[[ $ufs_rw == "boot_b init_boot_b vendor_boot_b vendor_kernel_boot_b dtbo_b userdata" ]] \
+  || fail "unexpected UFS_RW allowlist: $ufs_rw"
+for forbidden in boot_a init_boot_a vendor_boot_a vendor_kernel_boot_a dtbo_a \
+                 persist efs efs_backup modem_userdata modem_a modem_b \
+                 devinfo pinfo trusty_persist trusty_userdata mfg_data blenv rdbl vbmeta_a vbmeta_b abl_a abl_b; do
+  [[ " $ufs_rw " != *" $forbidden "* ]] || fail "UFS_RW must not include $forbidden"
+done
+! grep -q '^UFS_RW_LUNS=' device.conf || fail "mustang keeps UFS_RW_LUNS unset"
+pass "UFS_RW allowlist strictly excludes Slot A and all NV/calibration partitions"
+
+./build "$tmp/build" || fail "reboot-to compiles"
+[[ -x $tmp/build/reboot-to ]] || fail "reboot-to is not executable"
+pass "reboot-to compiles"
+
+./install "$tmp/root" "$tmp/build"
+for f in usr/bin/reboot-to \
+         usr/lib/udev/rules.d/10-omamobile-storage.rules \
+         usr/lib/udev/rules.d/70-omamobile-dma-heap.rules \
+         usr/lib/systemd/network/20-usb-gadget.network \
+         usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf \
+         usr/lib/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+         usr/lib/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf \
+         usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf \
+         usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf \
+         usr/share/uwsm/env.d/omamobile-laguna-graphics \
+         usr/share/omamobile/device-mustang/hypr/monitors.lua \
+         usr/share/omamobile/device-mustang/firmware-manifest.tsv \
+         usr/share/omamobile/device.conf \
+         usr/share/omamobile/device-mustang/version \
+         usr/share/licenses/omamobile-device-mustang/LICENSE \
+         etc/pacman.d/omamobile-mirrorlist; do
+  [[ -f $tmp/root/$f ]] || fail "install stages $f"
+done
+
+grep -q 'KERNEL=="sda", MODE="0000"' "$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules" \
+  || fail "the whole-disk node is made inaccessible"
+grep -q 'ID_PART_ENTRY_NAME}!="userdata"' "$tmp/root/usr/lib/udev/rules.d/10-omamobile-storage.rules" \
+  || fail "userdata is the only partition desktop tools may see"
+grep -q 'local omarchy_monitor_scale = 3.2' "$tmp/root/usr/share/omamobile/device-mustang/hypr/monitors.lua" \
+  || fail "mustang monitor scale is 3.2"
+for fw in edgetpu-buenos.fw dive_interp_rv64.bin rgx.fw.signed brcm/brcmfmac4390-pcie.bin brcmfmac4390-pcie.google,lga-mustang.bin BCM.google,lga-mustang.hcd google/aoc-mustang.bin; do
+  grep -qF "$fw" "$tmp/root/usr/share/omamobile/device-mustang/firmware-manifest.tsv" \
+    || fail "firmware manifest lists $fw"
+done
+grep -q '^PACKAGE=omamobile-device-mustang$' "$tmp/root/usr/share/omamobile/device.conf" \
+  || fail "the installed descriptor is mustang"
+grep -q 'omamobile-modem-policy' PKGBUILD && grep -q 'omamobile-sitd-policy' PKGBUILD \
+  || fail "PKGBUILD provides omamobile-modem-policy and omamobile-sitd-policy for opt-in omamobile-modem-sit"
+grep -qx 'ConditionPathExists=/etc/omamobile/laguna-modem-enable' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf" \
+  || fail "modem unit stays disabled by default"
+grep -qx 'Requisite=omamobile-modem.service' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf" \
+  || fail "sitd drop-in uses Requisite (never pulls generic modem unit)"
+grep -qx 'ConditionPathExists=/etc/omamobile/laguna-modem-enable' \
+  "$tmp/root/usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf" \
+  || fail "sitd drop-in stays disabled by default"
+[[ ! -d $tmp/root/usr/lib/systemd/system/multi-user.target.wants ]] \
+  || fail "no units auto-enabled at boot"
+
+for absent in usr/bin/omamobile-boot-success usr/bin/omamobile-bootctl \
+              usr/lib/systemd/system/omamobile-boot-success.service \
+              usr/bin/omamobile-wifi-start usr/bin/omamobile-charge-guard \
+              usr/bin/omamobile-camera-start usr/lib/systemd/logind.conf.d/10-omamobile-lid.conf; do
+  [[ ! -e $tmp/root/$absent ]] || fail "install includes $absent"
+done
+pass "install stages storage/dma-heap rules, Hyprland config, firmware manifest, and nothing unsafe"
+
+# USB is the last gateway
+net=vendor/systemd/network/20-usb-gadget.network
+! sed -n '/^\[Network\]/,/^\[/p' "$net" | grep -c '^Gateway=' >/dev/null || fail "usb0 sets no default route in [Network] (metric 0)"
+metric=$(sed -n '/^\[Route\]/,/^\[/{s/^Metric=//p}' "$net")
+[[ ${metric:-0} -gt 700 ]] || fail "usb0's gateway goes after Wi-Fi (600) and mobile data (700)"
+pass "USB is the last gateway"

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+# Maintainer: Bobby Bones <saariuscrypto@gmail.com>
+pkgname=omamobile-device-mustang
+pkgver=$(cat "${startdir:-.}/version")
+pkgrel=1
+pkgdesc="Omamobile support for the Google Pixel 10 Pro XL (mustang): storage guard, USB networking, Hyprland display config, and firmware manifest"
+arch=(aarch64)
+url="https://github.com/derekross/omamobile"
+license=(MIT)
+depends=(bash systemd omamobile-keyring)
+optdepends=(
+  'omamobile-freetpu: Tensor G5 EdgeTPU clean-room userspace runtime and udev rules'
+  'omamobile-mesa-pvr-volcanic: experimental opt-in PowerVR Volcanic Vulkan ICD (llvmpipe remains default)'
+  'omamobile-modem-sit: opt-in SIT cellular modem/SMS RIL for future Laguna S5400i cpif bring-up (disabled by default; zero NV/EFS writes)'
+)
+provides=(omamobile-device omamobile-modem-policy omamobile-sitd-policy)
+conflicts=(omamobile-device)
+backup=(etc/pacman.d/omamobile-mirrorlist)
+install=omamobile-device-mustang.install
+makedepends=(gcc)
+
+build() {
+  "$startdir/build" "$srcdir/build"
+}
+
+check() {
+  "$startdir/test/all"
+}
+
+package() {
+  "$startdir/install" "$pkgdir" "$srcdir/build"
+}

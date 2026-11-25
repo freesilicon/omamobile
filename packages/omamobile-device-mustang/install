@@ -1,0 +1,39 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Stage omamobile-device-mustang into DESTDIR. Nothing is enabled that would
+# mark a slot successful or start the radio, the charger, or a camera.
+#   ./install DESTDIR [BUILDDIR]
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+destination=${1:?Usage: ./install DESTDIR [BUILDDIR]}
+build=${2:-build}
+[[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
+install -Dm755 "$build/reboot-to" "$destination/usr/bin/reboot-to"
+install -Dm644 vendor/udev/rules.d/10-omamobile-storage.rules \
+  "$destination/usr/lib/udev/rules.d/10-omamobile-storage.rules"
+install -Dm644 vendor/udev/rules.d/70-omamobile-dma-heap.rules \
+  "$destination/usr/lib/udev/rules.d/70-omamobile-dma-heap.rules"
+install -Dm644 vendor/systemd/network/20-usb-gadget.network \
+  "$destination/usr/lib/systemd/network/20-usb-gadget.network"
+install -Dm644 vendor/systemd/logind.conf.d/10-omamobile-power-key.conf \
+  "$destination/usr/lib/systemd/logind.conf.d/10-omamobile-power-key.conf"
+install -Dm644 vendor/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf \
+  "$destination/usr/lib/systemd/system.conf.d/10-omamobile-reboot-watchdog.conf"
+install -Dm644 vendor/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf \
+  "$destination/usr/lib/systemd/system/omamobile-modem.service.d/10-laguna-no-start.conf"
+install -Dm644 vendor/systemd/system/omamobile-sitd.service.d/10-device-modem.conf \
+  "$destination/usr/lib/systemd/system/omamobile-sitd.service.d/10-device-modem.conf"
+install -Dm644 vendor/NetworkManager/conf.d/10-omamobile-usb.conf \
+  "$destination/usr/lib/NetworkManager/conf.d/10-omamobile-usb.conf"
+install -Dm644 uwsm/env.d/omamobile-laguna-graphics \
+  "$destination/usr/share/uwsm/env.d/omamobile-laguna-graphics"
+install -Dm644 vendor/hypr/monitors.lua \
+  "$destination/usr/share/omamobile/device-mustang/hypr/monitors.lua"
+install -Dm644 vendor/firmware-manifest.tsv \
+  "$destination/usr/share/omamobile/device-mustang/firmware-manifest.tsv"
+install -Dm644 device.conf \
+  "$destination/usr/share/omamobile/device.conf"
+install -Dm644 etc/omamobile-mirrorlist \
+  "$destination/etc/pacman.d/omamobile-mirrorlist"
+install -Dm644 LICENSE "$destination/usr/share/licenses/omamobile-device-mustang/LICENSE"
+install -Dm644 version "$destination/usr/share/omamobile/device-mustang/version"
