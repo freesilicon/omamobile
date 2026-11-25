@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: MIT
+# Maintainer: Bobby Bones <saariuscrypto@gmail.com>
+#
+# Draft opt-in Arch Linux ARM PKGBUILD for Mesa PowerVR Volcanic (DXT-48-1536,
+# BVNC 71.2.2448.1212, RGX_CR_CORE_ID 0x00470002099004bc) on Tensor G5 (laguna:
+# Pixel 10 Pro XL mustang & Pixel 10 Pro Fold rango).
+#
+# Design invariant:
+#   - Drops cleanly ALONGSIDE stock mesa (llvmpipe / kms_swrast fallback) and
+#     vulkan-panfrost. Installs ONLY the standalone Vulkan ICD library, ICD
+#     manifest, and opt-in environment helper — never overwrites libgallium,
+#     libEGL, libgbm, or kms_swrast_dri.so.
+#   - Aligned 1:1 with Phase 4 Track P4-B Mesa branch feat/pvr-volcanic-dxt-48-1536
+#     head 3878e8ae548bb8e9938082d2ce7d01c0df52c3cb (5 clean-room commits over
+#     upstream Mesa main b3f74d47c018a809ed7ffdcc97377fbbfdd59f80).
+#   - PVR_I_WANT_A_BROKEN_VULKAN_DRIVER=1 is NEVER enabled as a package default;
+#     DXT-48-1536 stays opt-in while Stages G2-G4 (Volcanic CSBGen/PCO) mature.
+#
+# Patch / source hook:
+#   - Set MESA_PVR_VOLCANIC_SRC=/path/to/mesa-worktree for offline builds against
+#     a local checkout of feat/pvr-volcanic-dxt-48-1536 (at 3878e8ae548bb8e9938082d2ce7d01c0df52c3cb),
+#     OR place exported 0001..0005 *.patch files into patches/ beside this PKGBUILD
+#     (applied in sorted order with patch --fuzz=0 -Np1 over upstream base commit).
+
+pkgname=omamobile-mesa-pvr-volcanic
+pkgver=$(cat "${startdir:-.}/version")
+_mesa_base_commit=b3f74d47c018a809ed7ffdcc97377fbbfdd59f80
+_mesa_pvr_commit=3878e8ae548bb8e9938082d2ce7d01c0df52c3cb
+_mesa_pvr_branch=feat/pvr-volcanic-dxt-48-1536
+pkgrel=1
+pkgdesc="Opt-in experimental Mesa PowerVR Volcanic (DXT-48-1536) Vulkan ICD for Tensor G5 alongside llvmpipe fallback"
+arch=(aarch64)
+url="https://gitlab.freedesktop.org/mesa/mesa"
+license=("MIT AND BSD-3-Clause AND SGI-B-2.0")
+depends=(
+  expat
+  glibc
+  libdrm
+  libgcc
+  libstdc++
+  mesa
+  spirv-tools
+  systemd-libs
+  vulkan-icd-loader
+  wayland
+  zlib
+  zstd
+)
+makedepends=(
+  clang
+  cmake
+  elfutils
+  glslang
+  libclc
+  libdisplay-info
+  libelf
+  libx11
+  libxcb
+  libxext
+  libxml2
+  libxrandr
+  libxshmfence
+  llvm
+  meson
+  ninja
+  python-mako
+  python-packaging
+  python-ply
+  python-pycparser
+  python-yaml
+  spirv-llvm-translator
+  wayland-protocols
+  xorgproto
+)
+optdepends=(
+  'linux-omamobile: Laguna drm/imagination Stage G1 kernel driver (powervr.exp_hw_support=1)'
+)
+provides=(vulkan-driver)
+options=(!lto)
+
+_resolve_mesa_src() {
+  if [[ -n ${MESA_PVR_VOLCANIC_SRC:-} && -d ${MESA_PVR_VOLCANIC_SRC} ]]; then
+    printf '%s\n' "$MESA_PVR_VOLCANIC_SRC"
+    return 0
+  fi
+  if [[ -d "$srcdir/mesa-pvr-volcanic" ]]; then
+    printf '%s\n' "$srcdir/mesa-pvr-volcanic"
+    return 0
+  fi
+  return 1
+}
+
+prepare() {
+  local src
+  if ! src=$(_resolve_mesa_src); then
+    echo "error: set MESA_PVR_VOLCANIC_SRC to a local Mesa checkout at $_mesa_pvr_commit ($_mesa_pvr_branch)" >&2
+    echo "       or unpack Mesa base $_mesa_base_commit into \$srcdir/mesa-pvr-volcanic with patches/*.patch" >&2
+    return 1
+  fi
+
+  # Apply any optional drop-in patch files staged in $startdir/patches/*.patch
+  shopt -s nullglob
+  local patches=("$startdir"/patches/*.patch)
+  shopt -u nullglob
+  if ((${#patches[@]} > 0)); then
+    local copy="$srcdir/mesa-patched"
+    rm -rf "$copy"
+    cp -a "$src" "$copy"
+    cd "$copy"
+    local p
+    for p in "${patches[@]}"; do
+      echo "Applying patch ${p##*/}..."
+      patch --fuzz=0 -Np1 < "$p"
+    done
+  fi
+}
+
+build() {
+  local src
+  if [[ -d "$srcdir/mesa-patched" ]]; then
+    src="$srcdir/mesa-patched"
+  else
+    src=$(_resolve_mesa_src) || return 1
+  fi
+
+  local meson_options=(
+    -Dvulkan-drivers=imagination
+    -Dgallium-drivers=
+    -Dplatforms=wayland,x11
+    -Dtools=imagination,drm-shim
+    -Dbuild-tests=true
+    -Dllvm=enabled
+    -Dmesa-clc=enabled
+    -Degl=disabled
+    -Dgbm=disabled
+    -Dgles1=disabled
+    -Dgles2=disabled
+    -Dglx=disabled
+    -Dgallium-rusticl=false
+    -Dgallium-va=disabled
+    -Dvalgrind=disabled
+    -Dhtml-docs=disabled
+    -Dvulkan-manifest-per-architecture=true
+    -Dbuildtype=debugoptimized
+  )
+
+  arch-meson "$src" "$srcdir/build" "${meson_options[@]}"
+  meson compile -C "$srcdir/build"
+}
+
+check() {
+  if [[ -d "$srcdir/build" ]]; then
+    meson test -C "$srcdir/build" --suite imagination --print-errorlogs
+  else
+    "$startdir/test/all"
+  fi
+}
+
+package() {
+  meson install -C "$srcdir/build" --destdir "$srcdir/stage" --no-rebuild
+
+  # Install ONLY the PowerVR Volcanic Vulkan ICD and manifest so stock mesa
+  # (llvmpipe / kms_swrast) and vulkan-panfrost remain completely untouched.
+  install -Dm755 "$srcdir/stage/usr/lib/libvulkan_powervr_mesa.so" \
+    "$pkgdir/usr/lib/libvulkan_powervr_mesa.so"
+  install -Dm644 "$srcdir/stage/usr/share/vulkan/icd.d/powervr_mesa_icd.aarch64.json" \
+    "$pkgdir/usr/share/vulkan/icd.d/powervr_mesa_icd.aarch64.json"
+
+  # Optional drm-shim library for offline Volcanic unit/ICD probing
+  if [[ -f "$srcdir/stage/usr/lib/libpowervr_noop_drm_shim.so" ]]; then
+    install -Dm755 "$srcdir/stage/usr/lib/libpowervr_noop_drm_shim.so" \
+      "$pkgdir/usr/lib/libpowervr_noop_drm_shim.so"
+  fi
+
+  install -Dm644 "$startdir/vendor/pvr-volcanic-env.sh" \
+    "$pkgdir/usr/share/omamobile/pvr-volcanic/env.sh"
+  install -Dm644 "$startdir/version" \
+    "$pkgdir/usr/share/omamobile/pvr-volcanic/version"
+  install -Dm644 "$startdir/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

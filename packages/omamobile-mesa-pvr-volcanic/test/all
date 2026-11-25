@@ -1,0 +1,39 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# Offline contract tests for omamobile-mesa-pvr-volcanic.
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+fail() { printf 'not ok - %s\n' "$1" >&2; exit 1; }
+pass() { printf 'ok - %s\n' "$1"; }
+
+bash -n PKGBUILD || fail "PKGBUILD parses"
+sh -n vendor/pvr-volcanic-env.sh || fail "pvr-volcanic-env.sh parses"
+pass "scripts parse"
+
+# Pin exact Phase 4 Mesa Volcanic commit and base commit
+grep -qx '_mesa_base_commit=b3f74d47c018a809ed7ffdcc97377fbbfdd59f80' PKGBUILD \
+  || fail "PKGBUILD pins Phase 4 Mesa base commit b3f74d47c018"
+grep -qx '_mesa_pvr_commit=3878e8ae548bb8e9938082d2ce7d01c0df52c3cb' PKGBUILD \
+  || fail "PKGBUILD pins Phase 4 Mesa Volcanic commit 3878e8ae548b"
+grep -qx '_mesa_pvr_branch=feat/pvr-volcanic-dxt-48-1536' PKGBUILD \
+  || fail "PKGBUILD names feat/pvr-volcanic-dxt-48-1536"
+pass "PKGBUILD aligns with Phase 4 Mesa 3878e8ae548b"
+
+# Must drop cleanly alongside stock mesa (llvmpipe fallback) without conflicts
+! grep -q '^conflicts=' PKGBUILD || fail "opt-in Volcanic ICD must not conflict with stock mesa"
+! grep -q '^replaces=' PKGBUILD || fail "opt-in Volcanic ICD must not replace stock mesa"
+grep -q -- '-Dvulkan-drivers=imagination' PKGBUILD || fail "builds imagination Vulkan driver"
+grep -q -- '-Dgallium-drivers=$' PKGBUILD || fail "does not overwrite stock mesa Gallium/llvmpipe libraries"
+grep -q 'libvulkan_powervr_mesa.so' PKGBUILD || fail "packages libvulkan_powervr_mesa.so"
+grep -q 'powervr_mesa_icd.aarch64.json' PKGBUILD || fail "packages powervr_mesa_icd.aarch64.json"
+grep -q 'patch --fuzz=0 -Np1' PKGBUILD || fail "patch hook enforces zero-fuzz application"
+pass "drops cleanly alongside stock mesa/llvmpipe with zero-fuzz patch hook"
+
+# Must never install global environment overrides enabling PVR_I_WANT_A_BROKEN_VULKAN_DRIVER
+! grep -q '/etc/environment\|/usr/lib/environment.d\|/usr/share/uwsm/env.d' PKGBUILD \
+  || fail "must not globally enable PVR_I_WANT_A_BROKEN_VULKAN_DRIVER"
+grep -q 'VK_DRIVER_FILES=/usr/share/vulkan/icd.d/powervr_mesa_icd.aarch64.json' vendor/pvr-volcanic-env.sh \
+  || fail "opt-in env helper points VK_DRIVER_FILES at powervr_mesa_icd.aarch64.json"
+[[ -f LICENSE && -f version && -f README.md && -f patches/README.md ]] \
+  || fail "required package docs and metadata exist"
+pass "opt-in guard and metadata verified"
